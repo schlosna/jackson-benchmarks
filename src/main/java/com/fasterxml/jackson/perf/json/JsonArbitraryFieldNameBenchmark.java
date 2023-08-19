@@ -57,6 +57,13 @@ public class JsonArbitraryFieldNameBenchmark {
                 return factory.disable(JsonFactory.Feature.CANONICALIZE_FIELD_NAMES);
             }
         },
+        NO_INTERN_OR_CANONICALIZE() {
+            @Override
+            <F extends JsonFactory, B extends TSFBuilder<F, B>> B apply(B factory) {
+                return factory.disable(JsonFactory.Feature.INTERN_FIELD_NAMES)
+                        .disable(JsonFactory.Feature.CANONICALIZE_FIELD_NAMES);
+            }
+        },
         ;
 
         abstract <F extends JsonFactory, B extends TSFBuilder<F, B>> B apply(B factory);
@@ -72,7 +79,7 @@ public class JsonArbitraryFieldNameBenchmark {
                 return factory.createParser(new ByteArrayInputStream(bytesSupplier.get()));
             }
         },
-        READER() {
+        INPUT_STREAM_READER() {
             @Override
             JsonParser create(JsonFactory factory, Supplier<byte[]> bytesSupplier) throws IOException {
                 // Instead of using 'new StringReader(bytesSupplier.get())', we construct an InputStreamReader
@@ -94,33 +101,35 @@ public class JsonArbitraryFieldNameBenchmark {
         abstract JsonParser create(JsonFactory factory, Supplier<byte[]> jsonSupplier) throws IOException;
     }
 
-    public enum InputShape {
-        KEY_MAP(
-                new TypeReference<Map<String, Boolean>>() {
-                },
-                () -> "{\"key\":true}"),
-        RANDOM_KEY_MAP(
-                new TypeReference<Map<String, Boolean>>() {
-                },
-                () -> "{\"" + ThreadLocalRandom.current().nextInt() + "\":true}"),
-        BEAN_WITH_RANDOM_KEY_MAP(
-                new TypeReference<SimpleClass>() {
-                },
-                () -> "{\"fieldWithMap\":{\"" + ThreadLocalRandom.current().nextInt()
-                        + "\":true},\"stringOne\":\"a\",\"stringTwo\":\"a\",\"stringThree\":\"a\"}"),
-        BEAN_WITH_LARGE_KEY_MAP(
-                new TypeReference<SimpleClass>() {
-                },
-                new Supplier<String>() {
-                    private final String json = generateSimpleInstanceJson(10_000);
+//    public enum InputShape {
+//        KEY_MAP(
+//                new TypeReference<Map<String, Boolean>>() {
+//                },
+//                () -> "{\"key\":true}"),
+//        RANDOM_KEY_MAP(
+//                new TypeReference<Map<String, Boolean>>() {
+//                },
+//                () -> "{\"" + ThreadLocalRandom.current().nextInt() + "\":true}"),
+//        BEAN_WITH_RANDOM_KEY_MAP(
+//                new TypeReference<SimpleClass>() {
+//                },
+//                () -> "{\"fieldWithMap\":{\"" + ThreadLocalRandom.current().nextInt()
+//                        + "\":true},\"stringOne\":\"a\",\"stringTwo\":\"a\",\"stringThree\":\"a\"}"),
+//        BEAN_WITH_LARGE_KEY_MAP(
+//                new TypeReference<SimpleClass>() {
+//                },
+//                new Supplier<String>() {
+//                    private final String json = generateSimpleInstanceJson(10_000);
+//
+//                    @Override
+//                    public String get() {
+//                        return json;
+//                    }
+//                }
+//        ),
+//        ;
 
-                    @Override
-                    public String get() {
-                        return json;
-                    }
-                }
-        ),
-        ;
+    public static final class InputShape {
 
         private static String generateSimpleInstanceJson(int n) {
             StringBuilder builder = new StringBuilder();
@@ -138,13 +147,18 @@ public class JsonArbitraryFieldNameBenchmark {
         private final TypeReference<?> typereference;
         private final Supplier<byte[]> bytesSupplier;
 
+        InputShape(Supplier<byte[]> bytesSupplier, TypeReference<?> typereference) {
+            this.typereference = typereference;
+            this.bytesSupplier = bytesSupplier;
+        }
+
         InputShape(TypeReference<?> typereference, Supplier<String> jsonSupplier) {
             this.typereference = typereference;
             this.bytesSupplier = () -> jsonSupplier.get().getBytes(StandardCharsets.UTF_8);
         }
     }
 
-    @Param
+//    @Param
     public InputShape shape;
 
     @Param
@@ -152,6 +166,9 @@ public class JsonArbitraryFieldNameBenchmark {
 
     @Param
     public FactoryMode mode;
+
+    @Param({"128", "512", "1024", "2048", "4096", "7168", "8192", "16384", "32768"})
+    public int size;
 
     private JsonFactory factory;
     private ObjectReader reader;
@@ -163,6 +180,16 @@ public class JsonArbitraryFieldNameBenchmark {
                 // Use FAIL_ON_UNKNOWN_PROPERTIES to ensure the benchmark inputs are valid
                 .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .build();
+
+        StringBuilder sb = new StringBuilder(size);
+        sb.append('"');
+        for (int i = 0; i < size - 2; i++) {
+            sb.append('x');
+        }
+        sb.append('"');
+        String json = sb.toString();
+        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+        shape = new InputShape(() -> bytes, new TypeReference<String>() {});
         reader = mapper.readerFor(shape.typereference);
     }
 
